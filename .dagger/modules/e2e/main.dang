@@ -1,0 +1,284 @@
+"""
+End-to-end checks for the Bun module.
+
+Each check drives the installed `bun` dependency against the sample project under
+`.dagger/modules/e2e/modules/hello`, plus throwaway in-memory workspaces for the
+discovery, cwd-scope, and failure paths. Run them with `dagger check`.
+"""
+type E2e {
+  let modulesRoot: String! = ".dagger/modules/e2e/modules"
+  let helloPath: String! = modulesRoot + "/hello"
+
+  """
+  Fail the current check when a condition is false.
+  """
+  let assert(condition: Boolean!, message: String!): Void {
+    if (condition == false) {
+      raise message
+    }
+    null
+  }
+
+  """
+  Return true when a list contains the exact string.
+  """
+  let contains(values: [String!]!, want: String!): Boolean! {
+    values.filter { value => value == want }.length > 0
+  }
+
+  """
+  A minimal private package.json for a throwaway fixture.
+  """
+  let pkg(name: String!): String! {
+    "{\n  \"name\": \"" + name + "\",\n  \"private\": true\n}\n"
+  }
+
+  """
+  A bun:test file that always fails.
+  """
+  let failingTest: String! =
+    "import { expect, test } from \"bun:test\";\n\ntest(\"fails\", () => {\n  expect(1).toBe(2);\n});\n"
+
+  """
+  A bun:test file that always passes.
+  """
+  let passingTest: String! =
+    "import { expect, test } from \"bun:test\";\n\ntest(\"ok\", () => {\n  expect(1).toBe(1);\n});\n"
+
+  """
+  A two-member Bun workspace where `@w/a` depends on `@w/b` via `workspace:*`.
+  `a`'s test asserts `a == b + 1 == 42`; pass `expected` to make it pass (42) or
+  fail (anything else).
+  """
+  let workspaceDir(expected: String!): Directory! {
+    directory
+      .withNewFile("package.json", "{\n  \"name\": \"root\",\n  \"private\": true,\n  \"workspaces\": [\"packages/*\"]\n}\n")
+      .withNewFile("packages/b/package.json", "{\n  \"name\": \"@w/b\",\n  \"module\": \"./index.ts\"\n}\n")
+      .withNewFile("packages/b/index.ts", "export const b = 41;\n")
+      .withNewFile("packages/a/package.json", "{\n  \"name\": \"@w/a\",\n  \"dependencies\": { \"@w/b\": \"workspace:*\" }\n}\n")
+      .withNewFile("packages/a/index.ts", "import { b } from \"@w/b\";\n\nexport const a = b + 1;\n")
+      .withNewFile(
+        "packages/a/a.test.ts",
+        "import { expect, test } from \"bun:test\";\nimport { a } from \"./index.ts\";\n\ntest(\"cross-member dep resolves\", () => {\n  expect(a).toBe(" + expected + ");\n});\n",
+      )
+  }
+
+  """
+  A monorepo with members in two subtrees: `packages/shared` and `apps/api` (which
+  depends on shared via `workspace:*`). `sharedTest` and `apiTest` are the two test
+  file bodies, so a caller can make either member pass or fail.
+  """
+  let monorepoDir(sharedTest: String!, apiTest: String!): Directory! {
+    directory
+      .withNewFile("package.json", "{\n  \"name\": \"root\",\n  \"private\": true,\n  \"workspaces\": [\"packages/*\", \"apps/*\"]\n}\n")
+      .withNewFile("packages/shared/package.json", "{\n  \"name\": \"@m/shared\",\n  \"module\": \"./index.ts\"\n}\n")
+      .withNewFile("packages/shared/index.ts", "export const s = 1;\n")
+      .withNewFile("packages/shared/shared.test.ts", sharedTest)
+      .withNewFile("apps/api/package.json", "{\n  \"name\": \"@m/api\",\n  \"dependencies\": { \"@m/shared\": \"workspace:*\" }\n}\n")
+      .withNewFile("apps/api/index.ts", "import { s } from \"@m/shared\";\n\nexport const api = s + 1;\n")
+      .withNewFile("apps/api/api.test.ts", apiTest)
+  }
+
+  """
+  Happy path: test, audit, and frozen-lockfile install all pass on the clean
+  hello fixture.
+  """
+  pub cleanProjectCheck(ws: Workspace!): Void @check {
+    let project = bun().project(ws, helloPath)
+    project.test(ws)
+    project.audit(ws)
+    project.installCheck(ws)
+    null
+  }
+
+  """
+  Discovery + fan-out are load-bearing: `testAll` finds a project by its lockfile
+  and runs it. A discoverable project with a failing test makes `testAll` fail; if
+  discovery had missed it, `testAll` would be a no-op and pass.
+  """
+  pub discoveryCheck(): Void @check {
+    let proj = directory
+      .withNewFile("pkg/package.json", pkg("pkg"))
+      .withNewFile("pkg/bun.lock", "{}\n")
+      .withNewFile("pkg/bad.test.ts", failingTest)
+      .asWorkspace()
+    let failed = try {
+      bun().testAll(proj)
+      false
+    } catch {
+      err => true
+    }
+    assert(failed, "testAll did not discover the lockfile'd project and run its failing test")
+    null
+  }
+
+  """
+  Project lookup snaps a nested path up to the owning project root, and
+  findUp:false keeps an exact root untouched.
+  """
+  pub projectLookupCheck(ws: Workspace!): Void @check {
+    let nested = bun().project(ws, helloPath + "/nested")
+    let exact = bun().project(ws, helloPath, findUp: false)
+    assert(nested.path == helloPath, "find-up lookup returned wrong path: " + nested.path)
+    assert(exact.path == helloPath, "exact lookup returned wrong path: " + exact.path)
+    null
+  }
+
+  """
+  install lays a working glibc `bun` into a bare debian image (which already
+  carries the required C++ runtime).
+  """
+  pub installBinaryCheck(): Void @check {
+    let version = bun()
+      .install(container.from("debian:stable-slim"))
+      .withExec(["bun", "--version"])
+      .stdout
+    assert(version.contains("1.3"), "install did not produce a working bun: " + version)
+    null
+  }
+
+  """
+  compile bakes the hello entrypoint (from package.json `main`) into a standalone
+  binary that runs and prints the expected greeting.
+  """
+  pub compileCheck(ws: Workspace!): Void @check {
+    let bin = bun().project(ws, helloPath).compile(ws)
+    let output = bun().base
+      .withFile("/app", bin, permissions: 493)
+      .withExec(["/app"])
+      .stdout
+    assert(output.contains("hello, bun"), "compiled binary printed unexpected output: " + output)
+    null
+  }
+
+  """
+  bundle emits a usable index.js for the project entrypoint.
+  """
+  pub bundleCheck(ws: Workspace!): Void @check {
+    let out = bun().project(ws, helloPath).bundle(ws)
+    assert(out.file("index.js").contents.contains("hello"), "bundle did not emit a usable index.js")
+    null
+  }
+
+  """
+  `test` is load-bearing: a project with a failing test makes the check fail
+  rather than silently pass.
+  """
+  pub failingTestCheck(): Void @check {
+    let proj = directory
+      .withNewFile("package.json", pkg("failing"))
+      .withNewFile("bad.test.ts", failingTest)
+      .asWorkspace()
+    let failed = try {
+      bun().project(proj, ".", findUp: false).test(proj)
+      false
+    } catch {
+      err => true
+    }
+    assert(failed, "test did not fail on a project with a failing test")
+    null
+  }
+
+  """
+  Discovery is cwd-aware (dagger/dagger#13688): from a project directory the
+  workspace-wide verbs act on that project only — a nearer project shadows a
+  farther-up ancestor, and sibling projects elsewhere in the workspace are never
+  scanned.
+  """
+  pub subdirScopeCheck(): Void @check {
+    # cwd=/sub is itself a project, so it shadows the ancestor root; `other` is a
+    # sibling outside the walk-down. Only sub is in scope, and it passes, so
+    # testAll passes even though the ancestor and the sibling both have a failing
+    # test.
+    let shadowed = directory
+      .withNewFile("package.json", pkg("root"))
+      .withNewFile("bun.lock", "{}\n")
+      .withNewFile("bad.test.ts", failingTest)
+      .withNewFile("other/package.json", pkg("other"))
+      .withNewFile("other/bun.lock", "{}\n")
+      .withNewFile("other/bad.test.ts", failingTest)
+      .withNewFile("sub/package.json", pkg("sub"))
+      .withNewFile("sub/bun.lock", "{}\n")
+      .withNewFile("sub/ok.test.ts", passingTest)
+    assert(
+      try { bun().testAll(shadowed.asWorkspace(cwd: "sub")); true } catch { err => false },
+      "from /sub: testAll must shadow the ancestor and skip the sibling, not run their failing tests",
+    )
+
+    # From /sub, sub is the project you're in, so its failing test fails testAll.
+    let failingHere = directory
+      .withNewFile("package.json", pkg("root"))
+      .withNewFile("bun.lock", "{}\n")
+      .withNewFile("ok.test.ts", passingTest)
+      .withNewFile("sub/package.json", pkg("sub"))
+      .withNewFile("sub/bun.lock", "{}\n")
+      .withNewFile("sub/bad.test.ts", failingTest)
+    assert(
+      try { bun().testAll(failingHere.asWorkspace(cwd: "sub")); false } catch { err => true },
+      "from /sub: testAll must cover the project you're in, so a failing sub fails it",
+    )
+    null
+  }
+
+  """
+  Find-up from a non-root subdirectory (dagger/dagger#13688): the workspace-wide
+  verbs act on the enclosing project, not on nothing. `pkg` has a failing test and
+  the cwd is `pkg/src` (no lockfile of its own), so testAll must walk up, find
+  `pkg`, and fail. (Under a cwd-and-below-only model this would be a silent no-op.)
+  """
+  pub subdirEnclosingCheck(): Void @check {
+    let proj = directory
+      .withNewFile("pkg/package.json", pkg("pkg"))
+      .withNewFile("pkg/bun.lock", "{}\n")
+      .withNewFile("pkg/bad.test.ts", failingTest)
+      .withNewFile("pkg/src/util.ts", "export const x = 1;\n")
+    let failed = try {
+      bun().testAll(proj.asWorkspace(cwd: "pkg/src"))
+      false
+    } catch {
+      err => true
+    }
+    assert(failed, "from pkg/src: testAll must find and run the enclosing project pkg")
+    null
+  }
+
+  """
+  Workspace / monorepo topology, with NO committed bun.lock: members are enumerated
+  from package.json `workspaces` and each runs at the workspace root so `workspace:*`
+  deps resolve — the install root is keyed on the `workspaces` field, not a lockfile,
+  so a member still installs at the root and `bun install` generates the lock.
+  """
+  pub workspaceCheck(): Void @check {
+    # Members enumerated and run at the root, so workspace:* resolves: a = b + 1 =
+    # 42 and the member tests pass.
+    bun().testAll(workspaceDir("42").asWorkspace())
+
+    # A failing member makes testAll fail — proving members are actually discovered
+    # and run (lockfile-only discovery would see just the root and no-op).
+    assert(
+      try { bun().testAll(workspaceDir("999").asWorkspace()); false } catch { err => true },
+      "testAll must enumerate workspace members and fail on @w/a's failing test",
+    )
+    null
+  }
+
+  """
+  cwd-scoping inside a monorepo (dagger/dagger#13688): running from a subdirectory
+  acts only on the members under it, not the whole workspace. From `packages/`, the
+  failing `apps/api` (a sibling under another subtree) must not run, and the passing
+  `packages/shared` must.
+  """
+  pub workspaceSubdirCheck(): Void @check {
+    # From packages/, apps/api is out of scope: its failing test must not run, so
+    # testAll passes (only packages/shared runs, and it passes).
+    bun().testAll(monorepoDir(passingTest, failingTest).asWorkspace(cwd: "packages"))
+
+    # packages/shared IS run from packages/ (not a silent no-op): a failing shared
+    # makes testAll fail.
+    assert(
+      try { bun().testAll(monorepoDir(failingTest, passingTest).asWorkspace(cwd: "packages")); false } catch { err => true },
+      "from packages/: testAll must run the in-scope packages/shared",
+    )
+    null
+  }
+}

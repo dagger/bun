@@ -1,0 +1,10 @@
+{
+  "name": "hello",
+  "module": "index.ts",
+  "main": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}
