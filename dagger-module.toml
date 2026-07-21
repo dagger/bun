@@ -1,0 +1,10 @@
+name = "bun"
+engineVersion = "v1.0.0-beta.7"
+
+[runtime]
+  source = "dang"
+
+[[dependencies]]
+  name = "polyfill"
+  source = "github.com/dagger/polyfill@main"
+  pin = "b30eb839000fe179e5d0544a9b667b21817b8120"

@@ -1,0 +1,156 @@
+"""
+A single Bun project — a directory with a package.json. For a workspace member,
+`installRoot` is the workspace root (where `bun install` runs and the shared
+bun.lock lives) and `rel` is the member's path beneath it; for a standalone
+project both collapse to the project itself.
+"""
+type BunProject {
+  """
+  Project directory, relative to the current location.
+  """
+  pub path: String!
+
+  """
+  Where `bun install` runs: the workspace root for a member, else `path`.
+  """
+  pub installRoot: String!
+
+  """
+  The project's path beneath `installRoot` ("" when it is the install root).
+  """
+  pub rel: String!
+
+  let base: Container!
+
+  let version: String!
+
+  let workdir: String! = if (rel == "") { "/src" } else { "/src/" + rel }
+
+  """
+  The project manifest (package.json).
+  """
+  pub config(ws: Workspace!): File! {
+    ws.directory(path).file("package.json")
+  }
+
+  """
+  Pruned project source (excludes .git and node_modules).
+  """
+  pub source(ws: Workspace!): Directory! {
+    ws.directory(path, exclude: [".git", "**/node_modules"])
+  }
+
+  """
+  Base container with the whole install root mounted and the cache warm — the
+  starting point for checks and builds, before `bun install`. For a workspace
+  member this mounts the whole workspace so `workspace:*` deps and the shared
+  lockfile resolve.
+  """
+  pub container(ws: Workspace!): Container! {
+    base
+      .withEnvVariable("BUN_INSTALL_CACHE_DIR", "/bun-cache")
+      .withMountedCache("/bun-cache", cacheVolume("bun-cache"))
+      .withDirectory("/src", ws.directory(installRoot, exclude: [".git", "**/node_modules"]))
+      .withWorkdir("/src")
+  }
+
+  """
+  `container` after `bun install` at the install root — node_modules materialized
+  (hoisted to the workspace root for a member).
+  """
+  pub installed(ws: Workspace!): Container! {
+    container(ws).withExec(["bun", "install"])
+  }
+
+  """
+  Run the test suite (`bun test`), scoped to this project's directory. Passes when
+  a project legitimately has no test files rather than erroring.
+  """
+  pub test(ws: Workspace!): Void @check {
+    installed(ws).withWorkdir(workdir).withExec(["bun", "test", "--pass-with-no-tests"]).sync
+    null
+  }
+
+  """
+  Audit dependencies for known vulnerabilities (`bun audit`). Runs at the install
+  root — one lockfile per workspace. `level` sets the minimum severity to report.
+  """
+  pub audit(ws: Workspace!, level: String = null): Void @check {
+    let levelFlag = if (level == null) { [] } else { ["--audit-level", level] }
+    installed(ws).withExec(["bun", "audit"] + levelFlag).sync
+    null
+  }
+
+  """
+  Verify the lockfile is in sync and installable at the install root
+  (`bun install --frozen-lockfile`).
+  """
+  pub installCheck(ws: Workspace!): Void @check {
+    container(ws).withExec(["bun", "install", "--frozen-lockfile"]).sync
+    null
+  }
+
+  """
+  Bundle the project (`bun build`) into `outdir` and return that directory.
+  `entrypoint` defaults to the manifest's `module`/`main` (falling back to index.ts).
+  """
+  pub bundle(
+    ws: Workspace!,
+    entrypoint: String = null,
+    outdir: String! = "dist",
+  ): Directory! {
+    let entry = resolveEntrypoint(ws, entrypoint)
+    installed(ws)
+      .withWorkdir(workdir)
+      .withExec(["bun", "build", entry, "--outdir", outdir])
+      .directory(outdir)
+  }
+
+  """
+  Compile a standalone executable (`bun build --compile`). `target` cross-compiles
+  (e.g. "bun-linux-x64", "bun-linux-arm64-musl"); null builds for the base image's
+  platform. `entrypoint` defaults to the manifest's `module`/`main`.
+  """
+  pub compile(
+    ws: Workspace!,
+    entrypoint: String = null,
+    outputName: String! = "app",
+    target: String = null,
+  ): File! {
+    let entry = resolveEntrypoint(ws, entrypoint)
+    let targetFlag = if (target == null) { [] } else { ["--target", target] }
+    let out = "/tmp/out/" + outputName
+    installed(ws)
+      .withWorkdir(workdir)
+      .withExec(["mkdir", "-p", "/tmp/out"])
+      .withExec(["bun", "build", "--compile"] + targetFlag + ["--outfile", out, entry])
+      .file(out)
+  }
+
+  """
+  The build entrypoint: `entrypoint` when given, else the manifest's `module` or
+  `main`, else index.ts.
+  """
+  let resolveEntrypoint(ws: Workspace!, entrypoint: String): String! {
+    if (entrypoint != null) {
+      entrypoint
+    } else {
+      try {
+        let pkg: PackageJson! = JSON.decode(config(ws).contents)
+        pkg.module ?? pkg.main ?? "index.ts"
+      } catch {
+        err => "index.ts"
+      }
+    }
+  }
+}
+
+"""
+Partial view of package.json: the build entrypoint (`module`/`main`) and the
+`workspaces` globs used to enumerate monorepo members.
+"""
+type PackageJson {
+  pub main: String = null
+  pub module: String = null
+  pub workspaces: [String!]! = []
+}
