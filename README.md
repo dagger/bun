@@ -121,12 +121,10 @@ dagger call install --ctr debian:stable-slim
 
 ### As a dependency
 
-Add it to your module's `dagger-module.toml`:
+Install it into your module:
 
-```toml
-[[dependencies]]
-  name = "bun"
-  source = "github.com/dagger/bun"
+```console
+dagger install github.com/dagger/bun
 ```
 
 Then compose it — Bun owns test/audit/build; you add the checks Bun lacks and
