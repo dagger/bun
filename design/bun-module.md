@@ -135,10 +135,10 @@ it is the project itself. The lockfile marks the *install root*, not a project �
 a workspace has one lockfile but many projects, so discovery keys on `package.json`.
 
 **Discovery is cwd-aware** ([dagger/dagger#13688](https://github.com/dagger/dagger/issues/13688)),
-via [`dagger/polyfill`](https://github.com/dagger/polyfill)'s
-`findConfigDirs(["package.json"], exclude: ["**/node_modules/**"])` — the reusable
-implementation of the issue: the nearest enclosing dir (find-up, 0–1) unioned with
-every one at or below the cwd (walk-down, 0–N), as cwd-relative paths.
+via the engine's
+`Workspace.findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"])` — the
+native implementation of the issue: the nearest enclosing dir (find-up, 0–1) unioned
+with every one at or below the cwd (walk-down, 0–N), as cwd-relative paths.
 
 Two Bun-specific steps sit on top, both keyed on the `package.json` `workspaces`
 field (authoritative, and independent of whether a lockfile is committed).

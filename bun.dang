@@ -60,7 +60,7 @@ type Bun {
 
   """
   Every Bun project discovered from the current location (dagger/dagger#13688), via
-  `ws.findConfigDirs(["package.json"], exclude: ["**/node_modules/**"])`:
+  `ws.findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"])`:
   each package.json at or below the cwd plus the nearest enclosing one. A workspace
   root (its `package.json` declares `workspaces`) is an install boundary, not a
   project, so it is dropped — its members are the package.json dirs beneath it, and
@@ -70,7 +70,7 @@ type Bun {
   """
   pub projects(ws: Workspace!): [BunProject!]! {
     ws
-      .findConfigDirs(["package.json"], exclude: ["**/node_modules/**"])
+      .findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"])
       .filter { d => isWorkspaceRoot(ws, d) == false }
       .map { d => mkProject(ws, d) }
   }
