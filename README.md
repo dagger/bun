@@ -91,8 +91,8 @@ Operation flags live on the function that uses them (`audit --level`,
 
 ## Usage
 
-> This module targets Dagger engine `v1.0.0-beta.7`. Until that release is your
-> default, prefix commands with `dagger --x-release=v1.0.0-beta.7`.
+> This module targets Dagger engine `v1.0.0-beta.10`. Until that release is your
+> default, prefix commands with `dagger --x-release=v1.0.0-beta.10`.
 
 Run all checks:
 
