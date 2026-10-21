@@ -22,6 +22,20 @@ type Bun {
   pub version: String! = "1.3.14"
 
   """
+  Workspace-root-relative globs to leave out of discovery, e.g.
+  ["**/clients/**"].
+
+  A package.json marks an npm package, not necessarily something to test: a
+  project can contain directories that carry one without being projects of
+  their own. Generated Dagger clients are the common case — each ships a
+  package.json, they can live anywhere the workspace config puts them, and one
+  that depends on a sibling by `file:` cannot even install on its own. Without
+  a way to drop them, they are discovered, installed and tested like anything
+  else, and a failure in one stops the run before the real project is reached.
+  """
+  pub exclude: [String!]! = []
+
+  """
   Base container for Bun commands. Defaults to oven/bun:<version>-alpine.
   Override to bring your own image — it must have `bun` on PATH, or pass it
   through `install` first.
@@ -70,7 +84,7 @@ type Bun {
   """
   pub projects(ws: Workspace!): [BunProject!]! {
     ws
-      .findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"])
+      .findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"] + exclude)
       .filter { d => isWorkspaceRoot(ws, d) == false }
       .map { d => mkProject(ws, d) }
   }
