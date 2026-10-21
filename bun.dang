@@ -119,7 +119,14 @@ type Bun {
   """
   let mkProject(ws: Workspace!, d: String!): BunProject! {
     let root = findInstallRoot(ws, d)
-    BunProject(path: d, installRoot: root, rel: memberRel(ws, d, root), base: base, version: version)
+    BunProject(
+      path: d,
+      installRoot: root,
+      wsInstallRoot: joinCwd(ws, root),
+      rel: memberRel(ws, d, root),
+      base: base,
+      version: version,
+    )
   }
 
   """

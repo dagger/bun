@@ -20,16 +20,23 @@ type BunProject {
   """
   pub rel: String!
 
+  """
+  `installRoot` relative to the workspace root rather than to the current
+  location, which is where the container has to put it.
+  """
+  pub wsInstallRoot: String!
+
   let base: Container!
 
   let version: String!
 
   """
   The install root as the container sees it. The container mirrors the
-  workspace so that workspace-relative addresses -- the ones a generated module
-  client serves itself by -- resolve inside it.
+  workspace -- the install root sits at its workspace-relative path, not at
+  /src -- so that a workspace-relative address resolves inside it the way it
+  does on the user's machine. A generated module client serves itself by one.
   """
-  let mountBase: String! = if (installRoot == "." or installRoot == "") { "/src" } else { "/src/" + installRoot }
+  let mountBase: String! = if (wsInstallRoot == "") { "/src" } else { "/src/" + wsInstallRoot }
 
   let workdir: String! = if (rel == "") { mountBase } else { mountBase + "/" + rel }
 
