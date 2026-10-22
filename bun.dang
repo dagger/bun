@@ -33,7 +33,7 @@ type Bun {
   a way to drop them, they are discovered, installed and tested like anything
   else, and a failure in one stops the run before the real project is reached.
   """
-  pub exclude: [String!]! = []
+  pub excludeProjects: [String!]! = []
 
   """
   Base container for Bun commands. Defaults to oven/bun:<version>-alpine.
@@ -84,7 +84,7 @@ type Bun {
   """
   pub projects(ws: Workspace!): [BunProject!]! {
     ws
-      .findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"] + exclude)
+      .findRoots(markers: ["package.json"], exclude: ["**/node_modules/**"] + excludeProjects)
       .filter { d => isWorkspaceRoot(ws, d) == false }
       .map { d => mkProject(ws, d) }
   }
