@@ -172,3 +172,5 @@ End-to-end checks live in `.dagger/modules/e2e`: they install this module as a
 dependency and drive it against the fixture under
 `.dagger/modules/e2e/modules/hello` (plus in-memory workspaces for failure
 paths). Run them with `dagger check`.
+
+<!-- ci baseline probe, to be deleted -->
