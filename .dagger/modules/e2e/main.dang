@@ -20,6 +20,19 @@ type E2e {
   }
 
   """
+  Run a check, raising its failure. A check called through a dependency comes
+  back as a Check that has not run.
+  """
+  let run(check: Check!): Void {
+    # Check.error is not null for a passing check when read from Dang, so ask
+    # pass first and read the message only on failure.
+    if (check.pass == false) {
+      raise check.error.message ?? "check failed"
+    }
+    null
+  }
+
+  """
   Return true when a list contains the exact string.
   """
   let contains(values: [String!]!, want: String!): Boolean! {
@@ -85,9 +98,9 @@ type E2e {
   """
   pub cleanProjectCheck(ws: Workspace!): Void @check {
     let project = bun().project(ws, helloPath)
-    project.test(ws)
-    project.audit(ws)
-    project.installCheck(ws)
+    run(project.test(ws))
+    run(project.audit(ws))
+    run(project.installCheck(ws))
     null
   }
 
@@ -102,12 +115,7 @@ type E2e {
       .withNewFile("pkg/bun.lock", "{}\n")
       .withNewFile("pkg/bad.test.ts", failingTest)
       .asWorkspace()
-    let failed = try {
-      bun().testAll(proj)
-      false
-    } catch {
-      err => true
-    }
+    let failed = { run(bun().testAll(proj)); false } rescue true
     assert(failed, "testAll did not discover the lockfile'd project and run its failing test")
     null
   }
@@ -169,12 +177,7 @@ type E2e {
       .withNewFile("package.json", pkg("failing"))
       .withNewFile("bad.test.ts", failingTest)
       .asWorkspace()
-    let failed = try {
-      bun().project(proj, ".", findUp: false).test(proj)
-      false
-    } catch {
-      err => true
-    }
+    let failed = { run(bun().project(proj, ".", findUp: false).test(proj)); false } rescue true
     assert(failed, "test did not fail on a project with a failing test")
     null
   }
@@ -200,10 +203,7 @@ type E2e {
       .withNewFile("sub/package.json", pkg("sub"))
       .withNewFile("sub/bun.lock", "{}\n")
       .withNewFile("sub/ok.test.ts", passingTest)
-    assert(
-      try { bun().testAll(shadowed.asWorkspace(cwd: "sub")); true } catch { err => false },
-      "from /sub: testAll must shadow the ancestor and skip the sibling, not run their failing tests",
-    )
+    run(bun().testAll(shadowed.asWorkspace(cwd: "sub")))
 
     # From /sub, sub is the project you're in, so its failing test fails testAll.
     let failingHere = directory
@@ -214,7 +214,7 @@ type E2e {
       .withNewFile("sub/bun.lock", "{}\n")
       .withNewFile("sub/bad.test.ts", failingTest)
     assert(
-      try { bun().testAll(failingHere.asWorkspace(cwd: "sub")); false } catch { err => true },
+      { run(bun().testAll(failingHere.asWorkspace(cwd: "sub"))); false } rescue true,
       "from /sub: testAll must cover the project you're in, so a failing sub fails it",
     )
     null
@@ -232,12 +232,7 @@ type E2e {
       .withNewFile("pkg/bun.lock", "{}\n")
       .withNewFile("pkg/bad.test.ts", failingTest)
       .withNewFile("pkg/src/util.ts", "export const x = 1;\n")
-    let failed = try {
-      bun().testAll(proj.asWorkspace(cwd: "pkg/src"))
-      false
-    } catch {
-      err => true
-    }
+    let failed = { run(bun().testAll(proj.asWorkspace(cwd: "pkg/src"))); false } rescue true
     assert(failed, "from pkg/src: testAll must find and run the enclosing project pkg")
     null
   }
@@ -251,12 +246,12 @@ type E2e {
   pub workspaceCheck(): Void @check {
     # Members enumerated and run at the root, so workspace:* resolves: a = b + 1 =
     # 42 and the member tests pass.
-    bun().testAll(workspaceDir("42").asWorkspace())
+    run(bun().testAll(workspaceDir("42").asWorkspace()))
 
     # A failing member makes testAll fail — proving members are actually discovered
     # and run (lockfile-only discovery would see just the root and no-op).
     assert(
-      try { bun().testAll(workspaceDir("999").asWorkspace()); false } catch { err => true },
+      { run(bun().testAll(workspaceDir("999").asWorkspace())); false } rescue true,
       "testAll must enumerate workspace members and fail on @w/a's failing test",
     )
     null
@@ -271,12 +266,12 @@ type E2e {
   pub workspaceSubdirCheck(): Void @check {
     # From packages/, apps/api is out of scope: its failing test must not run, so
     # testAll passes (only packages/shared runs, and it passes).
-    bun().testAll(monorepoDir(passingTest, failingTest).asWorkspace(cwd: "packages"))
+    run(bun().testAll(monorepoDir(passingTest, failingTest).asWorkspace(cwd: "packages")))
 
     # packages/shared IS run from packages/ (not a silent no-op): a failing shared
     # makes testAll fail.
     assert(
-      try { bun().testAll(monorepoDir(failingTest, passingTest).asWorkspace(cwd: "packages")); false } catch { err => true },
+      { run(bun().testAll(monorepoDir(failingTest, passingTest).asWorkspace(cwd: "packages"))); false } rescue true,
       "from packages/: testAll must run the in-scope packages/shared",
     )
     null
